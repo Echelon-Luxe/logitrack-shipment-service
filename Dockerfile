@@ -37,7 +37,12 @@ RUN npm ci --omit=dev --ignore-scripts \
 # Distroless: no shell, no package manager. An attacker with RCE has no
 # /bin/sh to pivot with, and Trivy finds far fewer OS CVEs because there is
 # almost no OS left to scan.
-FROM gcr.io/distroless/nodejs24-debian12:nonroot AS runtime
+#
+# debian13 (trixie), not debian12: the debian12 variant ships libssl3 3.0.18,
+# which Trivy flags for six OpenSSL CVEs already patched upstream in 3.0.19.
+# Base images lag distro security updates, so "which base tag" is a recurring
+# security decision, not a one-off choice.
+FROM gcr.io/distroless/nodejs24-debian13:nonroot AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 
