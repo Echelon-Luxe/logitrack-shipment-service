@@ -22,8 +22,7 @@ const ListQuery = z.object({
   limit: z.coerce.number().int().positive().max(200).optional(),
 });
 
-// The gateway verifies the JWT and forwards identity. Trusting a header is only
-// safe because backends are ClusterIP-only and unreachable from outside.
+// Safe to trust only because backends are ClusterIP-only.
 const traceOf = (h: Record<string, unknown>): string | undefined =>
   typeof h['x-trace-id'] === 'string' ? h['x-trace-id'] : undefined;
 
@@ -39,9 +38,7 @@ export async function shipmentRoutes(app: FastifyInstance): Promise<void> {
 
   app.get('/shipments', async (req) => {
     const q = ListQuery.parse(req.query);
-    // Spread only the keys that are actually present. With
-    // exactOptionalPropertyTypes, passing `{ customerId: undefined }` is not
-    // the same as omitting the key, and TypeScript is right to reject it.
+    // exactOptionalPropertyTypes: an explicit undefined is not an omitted key.
     return listShipments(prisma, {
       ...(q.customerId !== undefined ? { customerId: q.customerId } : {}),
       ...(q.driverId !== undefined ? { driverId: q.driverId } : {}),

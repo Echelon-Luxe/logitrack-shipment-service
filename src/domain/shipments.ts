@@ -22,7 +22,7 @@ const toPayload = (s: Shipment): ShipmentEventPayload => ({
   destination: s.destination,
 });
 
-/** Human-friendly reference, e.g. LT-8F3K2Q. Not a security token. */
+// Display reference, not a security token.
 const newReference = (): string => {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no I/O/0/1
   let out = '';
@@ -30,11 +30,7 @@ const newReference = (): string => {
   return `LT-${out}`;
 };
 
-/**
- * Every mutation below writes the shipment row and its outbox event inside ONE
- * transaction. That is the whole point of the outbox: the state change and the
- * announcement of it either both happen or neither does.
- */
+// Each mutation writes the row and its outbox event in one transaction.
 
 export async function createShipment(
   db: PrismaClient,
@@ -74,8 +70,7 @@ export async function assignDriver(
   return db.$transaction(async (tx) => {
     const current = await tx.shipment.findUnique({ where: { id } });
     if (!current) throw new NotFoundError(id);
-    // Assignment is not a status change, but it is meaningless once the
-    // shipment has finished or been cancelled.
+    // Not a status change, but meaningless once terminal.
     assertTransition(current.status as ShipmentStatus, 'PICKED_UP');
 
     const shipment = await tx.shipment.update({ where: { id }, data: { driverId } });

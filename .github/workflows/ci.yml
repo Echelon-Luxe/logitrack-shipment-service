@@ -6,12 +6,9 @@ on:
   push:
     branches: [dev]
 
-# Least privilege by default. Jobs that need more must ask for it explicitly.
 permissions:
   contents: read
 
-# A new push to the same PR cancels the superseded run instead of burning
-# runner minutes on a commit nobody will merge.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -31,13 +28,9 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
 
-      # `npm ci` (not `npm install`) - installs exactly the lockfile, fails if
-      # package.json and the lockfile disagree. Reproducible by construction.
       - name: Install dependencies
         run: npm ci
 
-      # The Prisma client is generated code and is gitignored, so every later
-      # step fails on missing types without this.
       - name: Generate Prisma client
         run: npx prisma generate
 
@@ -60,13 +53,9 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          # Gitleaks scans HISTORY, not just the working tree. A secret that was
-          # committed and then "removed" in a later commit is still in the pack
-          # files and still compromised. Depth 0 fetches the full history.
-          fetch-depth: 0
+          fetch-depth: 0   # gitleaks scans history, not just the working tree
 
-      # The gitleaks ACTION requires a paid licence for organisation accounts.
-      # The binary is MIT-licensed and free, so we pin and run it directly.
+      # The gitleaks action needs a paid licence for orgs; the binary does not.
       - name: Install gitleaks
         run: |
           VERSION=8.24.0
@@ -75,7 +64,6 @@ jobs:
           tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
           sudo mv /tmp/gitleaks /usr/local/bin/
 
-      # No continue-on-error. A leaked credential must block the merge.
       - name: Scan for secrets
         run: gitleaks detect --source . --redact --verbose --exit-code 1
 
@@ -93,46 +81,34 @@ jobs:
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
-      # --omit=dev: the gate covers what actually SHIPS. A CVE in vitest or the
-      # Prisma CLI cannot reach production, and blocking releases on it teaches
-      # people to ignore the gate. Dev-tool advisories are still surfaced by the
-      # informational step below and tracked by Dependabot.
+      # Blocking gate covers only what ships; Trivy scans the built image below.
       - name: Audit production dependencies
         run: npm audit --omit=dev --audit-level=high
 
-      # Advisory only. Reports dev-tool findings without blocking delivery.
-      # This is NOT a weakened gate - the blocking one above covers the image,
-      # and Trivy scans the built image itself further down.
       - name: Audit all dependencies (informational)
         run: npm audit --audit-level=high || true
   # ------------------------------------------------------------- image ---
   image:
     name: build / scan / push image
     runs-on: ubuntu-latest
-    # Only build the image once the code is known good. A failing lint should
-    # not burn several minutes of build time.
     needs: [quality, secrets, dependencies]
     permissions:
       contents: read
-      packages: write        # push to GHCR
-      security-events: write # upload SARIF to the Security tab
+      packages: write
+      security-events: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
-      # Tag with the full commit SHA. Never `latest`: it is mutable, so two
-      # pods started minutes apart can run different code and a rollback has
-      # nothing to roll back to.
+      # Full commit SHA, never `latest`: mutable tags cannot be rolled back.
       - name: Compute image reference
         id: ref
         run: |
           echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/${GITHUB_REPOSITORY##*/}" >> "$GITHUB_OUTPUT"
           echo "tag=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
 
-      # Build to a local tarball first so the image can be SCANNED before it is
-      # ever pushed. Pushing then scanning means a vulnerable image is already
-      # in the registry and pullable when the gate fails.
+      # Built locally first so Trivy can block before anything reaches GHCR.
       - name: Build image
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
@@ -143,14 +119,13 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # No continue-on-error: a CRITICAL or HIGH CVE blocks the merge.
       - name: Scan image
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ${{ steps.ref.outputs.image }}:${{ steps.ref.outputs.tag }}
           format: table
           severity: CRITICAL,HIGH
-          ignore-unfixed: true   # an unfixable CVE cannot be actioned by us
+          ignore-unfixed: true
           exit-code: '1'
 
       - name: Generate SBOM
@@ -160,8 +135,7 @@ jobs:
           format: spdx-json
           artifact-name: sbom-${{ steps.ref.outputs.tag }}.spdx.json
 
-      # Push only on merge to dev. Pull requests build and scan but never
-      # publish - otherwise anyone opening a PR can put an image in your registry.
+      # Push only on merge to dev, never from a PR.
       - name: Log in to GHCR
         if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3

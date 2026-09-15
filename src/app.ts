@@ -6,18 +6,7 @@ import { pingDb } from './db/client.js';
 
 export const SERVICE_NAME = 'logitrack-shipment-service';
 
-/**
- * Readiness is deliberately separate from liveness.
- *
- *   /healthz (liveness)  -> "the process is not wedged". Failing this gets the
- *                           container KILLED, so it must never depend on
- *                           Postgres or Kafka. A DB outage restarting every pod
- *                           in a crash loop is a classic self-inflicted outage.
- *
- *   /readyz  (readiness) -> "this pod can serve traffic right now". Failing this
- *                           only removes the pod from the Service endpoints.
- *                           THIS is where dependency checks belong.
- */
+// Liveness must not check dependencies: failing it kills the container.
 let ready = false;
 export const setReady = (v: boolean): void => { ready = v; };
 
@@ -34,12 +23,7 @@ export function buildApp(): FastifyInstance {
   });
 
   const app = Fastify({
-    // Structured JSON logs to stdout. Never log to files in a container -
-    // the collector (Promtail/Fluent Bit) reads stdout, and a file inside an
-    // ephemeral filesystem is lost the moment the pod is rescheduled.
     logger: { level: process.env['LOG_LEVEL'] ?? 'info' },
-    // Trust the ingress controller's X-Forwarded-* headers so client IPs
-    // (used for rate limiting) are real rather than the ingress pod's IP.
     trustProxy: true,
   });
 
@@ -57,10 +41,7 @@ export function buildApp(): FastifyInstance {
   app.get('/readyz', async (_req, reply) => {
     if (!ready) return reply.code(503).send({ status: 'not-ready', service: SERVICE_NAME });
 
-    // Readiness DOES check dependencies - failing only removes this pod from
-    // the Service endpoints. Kafka is deliberately not checked: the outbox
-    // means the service can still accept writes with the broker down, so
-    // refusing traffic would be worse than queueing.
+    // Kafka is not checked: the outbox lets writes continue without a broker.
     const db = await pingDb();
     if (!db) {
       return reply.code(503).send({ status: 'not-ready', service: SERVICE_NAME, db: false });
