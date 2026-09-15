@@ -1,0 +1,67 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  // Connection URLs live in prisma.config.ts (migrations) and the driver
+  // adapter in src/db/client.ts (runtime). Prisma 7 removed them from here.
+}
+
+enum ShipmentStatus {
+  CREATED
+  PICKED_UP
+  IN_TRANSIT
+  OUT_FOR_DELIVERY
+  DELIVERED
+  CANCELLED
+}
+
+model Shipment {
+  id          String         @id @default(uuid())
+  reference   String         @unique
+  customerId  String
+  driverId    String?
+  status      ShipmentStatus @default(CREATED)
+  origin      String
+  destination String
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  // Listing shipments for one customer is the most common query in the UI.
+  @@index([customerId, status])
+  @@index([driverId])
+}
+
+/// Transactional outbox.
+///
+/// The shipment row and its event are written in ONE database transaction, so
+/// they cannot disagree. A separate publisher reads unpublished rows and sends
+/// them to Kafka.
+///
+/// Without this, publishing directly inside the request handler gives two
+/// failure modes with no good answer:
+///   - commit, then the broker is down  -> the event is lost forever and
+///     tracking/notifications silently never learn about the change
+///   - publish, then the commit fails   -> consumers act on a shipment state
+///     that does not exist
+///
+/// The outbox converts both into "the event is published late", which is
+/// recoverable. The cost is at-least-once delivery, which consumers handle
+/// by keying on eventId.
+model OutboxEvent {
+  id          String    @id @default(uuid())
+  /// Kafka partition key. Same shipmentId -> same partition -> ordered.
+  partitionKey String
+  eventType   String
+  envelope    Json
+  publishedAt DateTime?
+  attempts    Int       @default(0)
+  lastError   String?
+  createdAt   DateTime  @default(now())
+
+  /// Partial index: the publisher only ever scans unpublished rows, and this
+  /// keeps that scan cheap as the table grows.
+  @@index([publishedAt, createdAt])
+}

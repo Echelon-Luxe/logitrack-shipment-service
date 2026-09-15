@@ -1,5 +1,8 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import { Registry, collectDefaultMetrics, Counter } from 'prom-client';
+import { shipmentRoutes } from './routes/shipments.js';
+import { registerErrorHandler } from './errors.js';
+import { pingDb } from './db/client.js';
 
 export const SERVICE_NAME = 'logitrack-shipment-service';
 
@@ -53,13 +56,25 @@ export function buildApp(): FastifyInstance {
 
   app.get('/readyz', async (_req, reply) => {
     if (!ready) return reply.code(503).send({ status: 'not-ready', service: SERVICE_NAME });
-    return { status: 'ready', service: SERVICE_NAME };
+
+    // Readiness DOES check dependencies - failing only removes this pod from
+    // the Service endpoints. Kafka is deliberately not checked: the outbox
+    // means the service can still accept writes with the broker down, so
+    // refusing traffic would be worse than queueing.
+    const db = await pingDb();
+    if (!db) {
+      return reply.code(503).send({ status: 'not-ready', service: SERVICE_NAME, db: false });
+    }
+    return { status: 'ready', service: SERVICE_NAME, db: true };
   });
 
   app.get('/metrics', async (_req, reply) => {
     reply.header('Content-Type', registry.contentType);
     return registry.metrics();
   });
+
+  registerErrorHandler(app);
+  void app.register(shipmentRoutes);
 
   return app;
 }

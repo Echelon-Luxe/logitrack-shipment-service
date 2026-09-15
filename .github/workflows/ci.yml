@@ -36,6 +36,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # The Prisma client is generated code and is gitignored, so every later
+      # step fails on missing types without this.
+      - name: Generate Prisma client
+        run: npx prisma generate
+
       - name: Lint
         run: npm run lint
 
@@ -86,10 +91,78 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       # Fails on high and critical. Moderate and below are reported but do not
       # block - otherwise a transitive advisory in a dev-only dependency stops
       # all delivery, and the team learns to ignore the gate entirely.
       - name: Audit dependencies
         run: npm audit --audit-level=high
+  # ------------------------------------------------------------- image ---
+  image:
+    name: build / scan / push image
+    runs-on: ubuntu-latest
+    # Only build the image once the code is known good. A failing lint should
+    # not burn several minutes of build time.
+    needs: [quality, secrets, dependencies]
+    permissions:
+      contents: read
+      packages: write        # push to GHCR
+      security-events: write # upload SARIF to the Security tab
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      # Tag with the full commit SHA. Never `latest`: it is mutable, so two
+      # pods started minutes apart can run different code and a rollback has
+      # nothing to roll back to.
+      - name: Compute image reference
+        id: ref
+        run: |
+          echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/${GITHUB_REPOSITORY##*/}" >> "$GITHUB_OUTPUT"
+          echo "tag=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
+      # Build to a local tarball first so the image can be SCANNED before it is
+      # ever pushed. Pushing then scanning means a vulnerable image is already
+      # in the registry and pullable when the gate fails.
+      - name: Build image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: ${{ steps.ref.outputs.image }}:${{ steps.ref.outputs.tag }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # No continue-on-error: a CRITICAL or HIGH CVE blocks the merge.
+      - name: Scan image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ steps.ref.outputs.image }}:${{ steps.ref.outputs.tag }}
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true   # an unfixable CVE cannot be actioned by us
+          exit-code: '1'
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        with:
+          image: ${{ steps.ref.outputs.image }}:${{ steps.ref.outputs.tag }}
+          format: spdx-json
+          artifact-name: sbom-${{ steps.ref.outputs.tag }}.spdx.json
+
+      # Push only on merge to dev. Pull requests build and scan but never
+      # publish - otherwise anyone opening a PR can put an image in your registry.
+      - name: Log in to GHCR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push image
+        if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+        run: docker push ${{ steps.ref.outputs.image }}:${{ steps.ref.outputs.tag }}
