@@ -1,10 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 
-/**
- * One client per process. Prisma manages its own pool; creating several
- * clients multiplies connections and exhausts Supabase's cap quickly - each
- * replica of each service opens its own pool.
- */
+// One client per process: each opens its own pool against Supabase.
 export const prisma = new PrismaClient({
   log: process.env['LOG_LEVEL'] === 'debug' ? ['warn', 'error'] : ['error'],
 });

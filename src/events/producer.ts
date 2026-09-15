@@ -28,19 +28,8 @@ export async function disconnectProducer(): Promise<void> {
   producer = null;
 }
 
-/**
- * Drains unpublished outbox rows to Kafka, oldest first.
- *
- * Ordering: rows are keyed by shipmentId, so Kafka routes all events for one
- * shipment to the same partition and consumers see them in order. Processing
- * oldest-first preserves that order within the batch too.
- *
- * Failure: a row that cannot be published keeps publishedAt NULL and has its
- * attempt count incremented. It is retried on the next tick rather than
- * dropped, so a broker outage delays events instead of losing them.
- *
- * Returns how many rows were published.
- */
+// Publishes oldest-first and stops at the first failure, so a shipment's
+// events can never be reordered. Failed rows stay unpublished and retry.
 export async function drainOutbox(batchSize = 50): Promise<number> {
   if (!producer || !connected) return 0;
 
@@ -71,8 +60,6 @@ export async function drainOutbox(batchSize = 50): Promise<number> {
           lastError: err instanceof Error ? err.message : String(err),
         },
       });
-      // Stop on first failure: continuing would publish later events for the
-      // same shipment ahead of this one and corrupt the timeline.
       break;
     }
   }

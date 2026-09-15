@@ -1,12 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { ZodError } from 'zod';
 
-/**
- * One error handler, so no route has to remember to map domain errors to
- * status codes. Domain errors carry their own statusCode; anything else is a
- * 500 and is logged with the stack but NOT returned to the caller - leaking
- * internals is how stack traces end up in bug reports from strangers.
- */
 export function registerErrorHandler(app: FastifyInstance): void {
   app.setErrorHandler((err, req, reply) => {
     if (err instanceof ZodError) {
@@ -19,11 +13,9 @@ export function registerErrorHandler(app: FastifyInstance): void {
       });
     }
 
-    // Fastify types the handler argument as unknown once ZodError is narrowed off.
     const e = err as Error & { statusCode?: number };
     const status = e.statusCode;
-    // Only 4xx messages are safe to return: they describe what the CALLER did
-    // wrong. 5xx messages describe what we did wrong and can leak internals.
+    // Only 4xx messages are returned; 5xx text can leak internals.
     if (typeof status === 'number' && status >= 400 && status < 500) {
       return reply.code(status).send({ error: e.name, message: e.message });
     }
