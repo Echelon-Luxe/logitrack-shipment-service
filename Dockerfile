@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 
 # --------------------------------------------------------------- build ---
-FROM node:24-bookworm-slim AS build
+FROM node:26-bookworm-slim AS build
 WORKDIR /app
 COPY package.json package-lock.json .npmrc ./
 COPY prisma ./prisma
@@ -14,7 +14,7 @@ COPY src ./src
 RUN npx prisma generate && npm run build
 
 # ---------------------------------------------------- production deps ---
-FROM node:24-bookworm-slim AS prod-deps
+FROM node:26-bookworm-slim AS prod-deps
 WORKDIR /app
 COPY package.json package-lock.json .npmrc ./
 RUN npm ci --omit=dev --ignore-scripts \
