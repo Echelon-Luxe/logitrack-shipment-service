@@ -1,12 +1,17 @@
 generator client {
-  provider = "prisma-client"
-  output   = "../src/generated/prisma"
+  provider = "prisma-client-js"
 }
 
 datasource db {
   provider = "postgresql"
-  // Connection URLs live in prisma.config.ts (migrations) and the driver
-  // adapter in src/db/client.ts (runtime). Prisma 7 removed them from here.
+  // Runtime: Supabase transaction pooler (port 6543). ?pgbouncer=true is
+  // mandatory - pgBouncer in transaction mode cannot hold the prepared
+  // statements Prisma emits, giving intermittent
+  // "prepared statement s0 already exists" under concurrency.
+  url       = env("DATABASE_URL")
+  // Migrations: direct connection (port 5432). DDL and Prisma's advisory lock
+  // do not work through a transaction pooler.
+  directUrl = env("DIRECT_URL")
 }
 
 enum ShipmentStatus {

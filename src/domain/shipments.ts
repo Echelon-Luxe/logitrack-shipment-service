@@ -1,4 +1,4 @@
-import type { PrismaClient, Shipment } from '../generated/prisma/client.js';
+import type { PrismaClient, Shipment } from '@prisma/client';
 import { assertTransition, eventTypeForStatus, type ShipmentStatus } from './status.js';
 import { buildEnvelope, type ShipmentEventPayload } from '../events/envelope.js';
 

@@ -1,48 +1,57 @@
 # syntax=docker/dockerfile:1.7
 
-# ---------------------------------------------------------------- deps ---
-FROM node:24-bookworm-slim AS deps
-WORKDIR /app
-COPY package.json package-lock.json ./
-COPY prisma ./prisma
-COPY prisma.config.ts ./
-# --ignore-scripts blocks postinstall, so the Prisma client is generated
-# explicitly below. Running arbitrary install scripts from 400+ transitive
-# packages during a build is a supply-chain risk worth removing.
-RUN npm ci --ignore-scripts
-
 # --------------------------------------------------------------- build ---
-FROM deps AS build
+FROM node:24-bookworm-slim AS build
 WORKDIR /app
+COPY package.json package-lock.json .npmrc ./
+COPY prisma ./prisma
+# --ignore-scripts blocks postinstall across 300+ transitive packages, so the
+# Prisma client is generated explicitly below instead.
+RUN npm ci --ignore-scripts
 COPY tsconfig.json ./
 COPY src ./src
+# Generating here produces the LINUX query engine, matching the runtime image.
 RUN npx prisma generate && npm run build
 
 # ---------------------------------------------------- production deps ---
 FROM node:24-bookworm-slim AS prod-deps
 WORKDIR /app
-COPY package.json package-lock.json ./
-RUN npm ci --omit=dev --ignore-scripts
-# The generated client is required at runtime and lives under src/, so it is
-# copied from the build stage rather than regenerated here.
-COPY --from=build /app/src/generated ./dist/generated
+COPY package.json package-lock.json .npmrc ./
+RUN npm ci --omit=dev --ignore-scripts \
+ # @prisma/client declares the `prisma` CLI as an OPTIONAL PEER dependency, so
+ # npm installs it as a production package no matter that our package.json
+ # lists it under devDependencies. That drags in @prisma/config, deepmerge-ts
+ # and (on Prisma 7) mysql2 - roughly 120 MB of build tooling, plus their CVEs,
+ # into a runtime image that never invokes the CLI.
+ #
+ # The runtime needs only @prisma/client plus the generated .prisma/client
+ # (which embeds the query engine), so the CLI is removed explicitly.
+ && rm -rf node_modules/prisma \
+           node_modules/@prisma/config \
+           node_modules/@prisma/engines \
+           node_modules/@prisma/engines-version \
+           node_modules/deepmerge-ts \
+           node_modules/.bin/prisma
 
 # -------------------------------------------------------------- runtime ---
-# Distroless: no shell, no package manager, no busybox. An attacker who gets
-# RCE has no /bin/sh to pivot with, and Trivy finds far fewer OS CVEs because
-# there is almost no OS left to scan.
+# Distroless: no shell, no package manager. An attacker with RCE has no
+# /bin/sh to pivot with, and Trivy finds far fewer OS CVEs because there is
+# almost no OS left to scan.
 FROM gcr.io/distroless/nodejs24-debian12:nonroot AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 
 COPY --from=prod-deps --chown=nonroot:nonroot /app/node_modules ./node_modules
+# The generated client lives outside the dependency tree and must come from the
+# build stage, where it was produced against the linux target.
+COPY --from=build     --chown=nonroot:nonroot /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=build     --chown=nonroot:nonroot /app/dist ./dist
 COPY --from=build     --chown=nonroot:nonroot /app/package.json ./
 
-# Matches runAsUser: 1000 / runAsNonRoot: true in the Helm chart. If these
-# disagree the pod fails to start with CreateContainerConfigError.
+# Matches runAsUser: 1000 / runAsNonRoot: true in the Helm chart. A mismatch
+# gives CreateContainerConfigError at pod start.
 USER nonroot
 EXPOSE 3002
 
-# No shell in distroless, so this is exec form only - shell form would fail.
+# Exec form only - distroless has no shell for the shell form.
 CMD ["dist/index.js"]
