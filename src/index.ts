@@ -1,4 +1,5 @@
 import { buildApp, setReady, SERVICE_NAME } from './app.js';
+import { closeLogger } from './logging.js';
 import { connectProducer, disconnectProducer, startOutboxPublisher, stopOutboxPublisher } from './events/producer.js';
 import { pingDb } from './db/client.js';
 
@@ -37,6 +38,8 @@ for (const signal of ['SIGTERM', 'SIGINT'] as const) {
     void (async () => {
       await app.close();
       await disconnectProducer();
+      // Last: flush what Seq is still batching before the process goes.
+      await closeLogger();
       process.exit(0);
     })();
   });
@@ -44,5 +47,5 @@ for (const signal of ['SIGTERM', 'SIGINT'] as const) {
 
 main().catch((err: unknown) => {
   app.log.error({ err }, 'failed to start');
-  process.exit(1);
+  void closeLogger().then(() => process.exit(1));
 });

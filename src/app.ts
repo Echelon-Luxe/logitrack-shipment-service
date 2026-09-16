@@ -1,5 +1,6 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import { Registry, collectDefaultMetrics, Counter } from 'prom-client';
+import { buildLogger } from './logging.js';
 import { shipmentRoutes } from './routes/shipments.js';
 import { registerErrorHandler } from './errors.js';
 import { pingDb } from './db/client.js';
@@ -23,7 +24,7 @@ export function buildApp(): FastifyInstance {
   });
 
   const app = Fastify({
-    logger: { level: process.env['LOG_LEVEL'] ?? 'info' },
+    loggerInstance: buildLogger(SERVICE_NAME),
     trustProxy: true,
   });
 
