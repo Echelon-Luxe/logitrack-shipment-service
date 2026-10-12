@@ -10,14 +10,24 @@ export interface EventEnvelope<T = unknown> {
   payload: T;
 }
 
+// Additive only: consumers ignore unknown fields, so new ones are safe to add
+// without bumping eventVersion. Removing or renaming one is not.
 export interface ShipmentEventPayload {
   shipmentId: string;
   reference: string;
   status: string;
   customerId: string;
   driverId: string | null;
+  driverUserId: string | null;
   origin: string;
   destination: string;
+  originLat: number | null;
+  originLng: number | null;
+  destLat: number | null;
+  destLng: number | null;
+  priceKobo: number;
+  customerName: string;
+  driverName: string | null;
 }
 
 export function buildEnvelope<T>(args: {

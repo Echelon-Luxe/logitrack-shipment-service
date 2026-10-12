@@ -26,15 +26,39 @@ model Shipment {
   id          String         @id @default(uuid())
   reference   String         @unique
   customerId  String
+  // driver-service's Driver.id - what dispatch picks from the fleet list.
   driverId    String?
+  // The driver's USER id. Ownership checks compare this with x-user-id, so a
+  // driver is recognised from their token alone, without asking driver-service.
+  driverUserId String?
   status      ShipmentStatus @default(CREATED)
   origin      String
   destination String
+  // Optional: shipments created before geocoding existed have none, and the
+  // map falls back to showing just the timeline.
+  originLat   Float?
+  originLng   Float?
+  destLat     Float?
+  destLng     Float?
+  // Quoted at creation, in kobo. The customer pays this; payment-service reads
+  // it rather than trusting an amount sent by the browser.
+  priceKobo   Int            @default(0)
+  distanceKm  Float?
+  notes       String?
+  // Snapshots for display. Copied once so lists render without a call to
+  // user-service or driver-service per row.
+  customerName  String       @default("")
+  customerEmail String       @default("")
+  customerPhone String?
+  driverName    String?
+  driverPhone   String?
   createdAt   DateTime       @default(now())
   updatedAt   DateTime       @updatedAt
 
   @@index([customerId, status])
   @@index([driverId])
+  @@index([driverUserId, status])
+  @@index([status, createdAt])
 }
 
 // Transactional outbox: the row and its event commit together, so a broker
